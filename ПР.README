@@ -1,0 +1,233 @@
+**Система управления складом и запасами (MVP)**
+Описание проекта
+Данный проект представляет собой базу данных для информационной системы управления складскими запасами малого бизнеса. Система обеспечивает полный цикл учёта товаров: 
+поступление от поставщиков, хранение на складах, резервирование, отгрузку клиентам, инвентаризацию и автозаказ. Решение ориентировано на MVP (минимально жизнеспособный продукт) 
+и включает как транзакционную часть (OLTP), так и аналитическую (OLAP) подсистему.
+Целевая аудитория: менеджеры по закупкам, кладовщики, аналитики, руководители малого бизнеса (например, интернет-магазина, дистрибьюторской компании или сети розничных точек).
+
+Ключевые возможности:
+Управление товарами, категориями, поставщиками, клиентами, складами.
+Учёт остатков и резервирование товаров под заказы.
+Обработка заказов поставщикам и клиентам.
+Автоматическое создание заказов на пополнение при низких остатках.
+Аудит изменений остатков (история движений).
+Представления для оперативных отчётов.
+Ролевая модель безопасности (администратор, менеджер, сотрудник склада, наблюдатель).
+
+Аналитическая подсистема:
+
+Сегментация клиентов (RFM-анализ).
+ABC-анализ товаров по выручке.
+Оценка эффективности поставщиков.
+Динамика остатков и продаж по складам.
+Готовые представления для визуализации в BI-инструментах.
+
+2. Описание предметной области
+
+Система предназначена для управления товарными запасами малого предприятия (например, интернет-магазина, дистрибьютора или сети розничных точек). Основные бизнес-сущности:
+Товары – номенклатура, категории, поставщики, цена, порог заказа.
+Склады – места хранения, их локации.
+Остатки – актуальное количество товаров на каждом складе, зарезервированные объёмы.
+Поставки – заказы поставщикам, их статусы и позиции.
+Продажи – заказы клиентов, их состав и статусы.
+Клиенты – покупатели с контактной информацией.
+Пользователи – сотрудники системы с разными ролями.
+
+-- ============================================================
+-- Создание БД- -  docker run --name postgres-warehouse-new -e POSTGRES_PASSWORD=******** -e POSTGRES_USER=postgres -e POSTGRES_DB=my_new_db -p 5433:5432 -d postgres:15
+-- ============================================================
+-- Создание таблиц БД
+
+-- 1. Пользователи системы
+CREATE TABLE users (
+    user_id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    full_name VARCHAR(100)
+);
+
+-- 2. Категории товаров (иерархическая)
+CREATE TABLE categories (
+    category_id SERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    parent_id INT REFERENCES categories(category_id)
+);
+
+-- 3. Поставщики
+CREATE TABLE suppliers (
+    supplier_id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    contact VARCHAR(100),
+    phone VARCHAR(20),
+    email VARCHAR(100)
+);
+
+-- 4. Товары
+CREATE TABLE products (
+    product_id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    category_id INT REFERENCES categories(category_id),
+    supplier_id INT REFERENCES suppliers(supplier_id),
+    unit VARCHAR(20) NOT NULL,
+    reorder_level INT DEFAULT 10,
+    price NUMERIC(10,2) NOT NULL
+);
+
+-- 5. Склады
+CREATE TABLE warehouses (
+    warehouse_id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    location VARCHAR(200)
+);
+
+-- 6. Остатки на складах
+CREATE TABLE inventory (
+    warehouse_id INT REFERENCES warehouses(warehouse_id),
+    product_id INT REFERENCES products(product_id),
+    quantity INT DEFAULT 0,
+    reserved_quantity INT DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (warehouse_id, product_id)
+);
+
+-- 7. Заказы поставщикам
+CREATE TABLE purchase_orders (
+    purchase_order_id SERIAL PRIMARY KEY,
+    supplier_id INT REFERENCES suppliers(supplier_id),
+    order_date DATE DEFAULT CURRENT_DATE,
+    expected_arrival DATE,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_by INT REFERENCES users(user_id)
+);
+
+-- 8. Позиции заказов поставщикам
+CREATE TABLE purchase_order_items (
+    purchase_order_id INT REFERENCES purchase_orders(purchase_order_id) ON DELETE CASCADE,
+    product_id INT REFERENCES products(product_id),
+    quantity INT NOT NULL,
+    unit_price NUMERIC(10,2) NOT NULL,
+    received_quantity INT DEFAULT 0,
+    PRIMARY KEY (purchase_order_id, product_id)
+);
+
+-- 9. Клиенты
+CREATE TABLE customers (
+    customer_id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100),
+    phone VARCHAR(20),
+    address TEXT
+);
+
+-- 10. Заказы клиентов
+CREATE TABLE customer_orders (
+    customer_order_id SERIAL PRIMARY KEY,
+    customer_id INT REFERENCES customers(customer_id),
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'new',
+    shipping_address TEXT
+);
+
+-- 11. Позиции заказов клиентов
+CREATE TABLE customer_order_items (
+    customer_order_id INT REFERENCES customer_orders(customer_order_id) ON DELETE CASCADE,
+    product_id INT REFERENCES products(product_id),
+    quantity INT NOT NULL,
+    unit_price NUMERIC(10,2) NOT NULL,
+    PRIMARY KEY (customer_order_id, product_id)
+);
+
+-- Таблица для аудита (используется триггерами)
+CREATE TABLE inventory_audit (
+    audit_id SERIAL PRIMARY KEY,
+    warehouse_id INT,
+    product_id INT,
+    old_quantity INT,
+    new_quantity INT,
+    changed_by VARCHAR(50),
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    action VARCHAR(20)
+);
+
+-- ============================================================
+-- Вставка тестовых данных 
+-- ============================================================
+
+-- 1. Пользователи
+INSERT INTO users (username, password_hash, role, full_name) VALUES
+('admin', 'hash1', 'admin', 'Главный администратор'),
+('manager', 'hash2', 'manager', 'Менеджер'),
+('stock', 'hash3', 'warehouse_staff', 'Сотрудник склада'),
+('viewer', 'hash4', 'viewer', 'Наблюдатель');
+
+-- 2. Категории
+INSERT INTO categories (name, parent_id) VALUES
+('Электроника', NULL),
+('Бытовая техника', 1),
+('Комплектующие', 1),
+('Мебель', NULL),
+('Периферия', 1);
+
+-- 3. Поставщики
+INSERT INTO suppliers (name, contact, phone, email) VALUES
+('ООО "Поставка-Плюс"', 'Иванов И.И.', '+7-999-111-22-33', 'info@postavka.ru'),
+('ЗАО "Товары оптом"', 'Петров П.П.', '+7-999-222-33-44', 'opt@tovary.ru');
+
+-- 4. Товары
+INSERT INTO products (name, description, category_id, supplier_id, unit, reorder_level, price) VALUES
+('Ноутбук Acer', 'Игровой ноутбук', 1, 1, 'шт', 5, 50000.00),
+('Смартфон Samsung', 'Флагман', 1, 2, 'шт', 10, 80000.00),
+('Пылесос Xiaomi', 'Робот-пылесос', 2, 1, 'шт', 3, 15000.00),
+('Материнская плата ASUS', 'Для ПК', 3, 2, 'шт', 8, 12000.00),
+('Стул офисный', 'Эргономичный', 4, 2, 'шт', 2, 5000.00);
+
+-- 5. Склады
+INSERT INTO warehouses (name, location) VALUES
+('Основной склад', 'Москва, ул. Ленина 1'),
+('Резервный склад', 'Москва, ул. Пушкина 2');
+
+-- 6. Остатки на складах
+INSERT INTO inventory (warehouse_id, product_id, quantity, reserved_quantity) VALUES
+(1, 1, 12, 2),
+(1, 2, 5, 1),
+(1, 3, 2, 0),
+(1, 4, 10, 0),
+(1, 5, 1, 0),
+(2, 1, 5, 0),
+(2, 2, 8, 0);
+
+-- 7. Клиенты
+INSERT INTO customers (name, email, phone, address) VALUES
+('Иванов Сергей', 'sergey@mail.ru', '+7-999-555-66-77', 'Москва, ул. Тверская 10'),
+('Петрова Анна', 'anna@mail.ru', '+7-999-666-77-88', 'Москва, ул. Арбат 5');
+
+-- 8. Заказы клиентов
+INSERT INTO customer_orders (customer_id, status, shipping_address) VALUES
+(1, 'processed', 'Москва, ул. Тверская 10'),
+(2, 'new', 'Москва, ул. Арбат 5');
+
+-- 9. Позиции заказов клиентов
+INSERT INTO customer_order_items (customer_order_id, product_id, quantity, unit_price) VALUES
+(1, 1, 1, 55000.00),
+(1, 3, 2, 16000.00),
+(2, 2, 1, 85000.00);
+
+-- 10. Заказы поставщикам
+INSERT INTO purchase_orders (supplier_id, expected_arrival, created_by) VALUES
+(1, '2025-02-01', 1),
+(2, '2025-02-15', 2);
+
+-- 11. Позиции заказов поставщикам
+INSERT INTO purchase_order_items (purchase_order_id, product_id, quantity, unit_price) VALUES
+(1, 1, 10, 48000.00),
+(1, 3, 5, 14000.00),
+(2, 2, 20, 75000.00);
+
+-- ============================================================
+-- Аналитические запросы
+-- ============================================================
+
+
+
