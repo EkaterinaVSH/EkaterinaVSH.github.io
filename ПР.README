@@ -679,7 +679,7 @@ critical_products AS (
         COUNT(CASE WHEN vi.status = 'Требуется заказ' THEN 1 END) AS need_order_count,
         COUNT(CASE WHEN vi.status = 'Скоро закончится' THEN 1 END) AS soon_empty_count
     FROM products p
-    JOIN vw_inventory_status vi ON p.product_id = p.product_id
+    JOIN vw_inventory_status vi ON p.product_id = vi.product_id
     GROUP BY p.supplier_id
 )
 SELECT
@@ -724,7 +724,7 @@ SELECT
         ELSE 'Z (низкая)'
     END AS xyz_class
 FROM vw_product_performance pp
-JOIN vw_inventory_status vi ON pp.product_id = pp.product_id;
+JOIN vw_inventory_status vi ON p.product_id = vi.product_id
 
 Представление vw_product_performance автоматически присваивает каждому товару класс на основе его выручки
 
@@ -739,7 +739,7 @@ SELECT
     ELSE 'Достаточно'
 END AS status
 FROM vw_product_performance pp
-JOIN vw_inventory_status vi ON pp.product_id = pp.product_id;
+JOIN vw_inventory_status vi ON p.product_id = vi.product_id
 
 Представление vw_inventory_status вычисляет статус каждого товара на складе
 
